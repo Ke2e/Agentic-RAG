@@ -9,6 +9,7 @@ import { EPubLoader } from "@langchain/community/document_loaders/fs/epub";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { CONFIG } from "./common/config.mjs";
 import { makeEmbeddings } from "./common/llm.mjs";
+import { ensureEsIndex, bulkIndexChunks } from "./common/es-client.mjs";
 
 const BOOK_NAME = parse(CONFIG.CORPUS_PATH).name;
 
@@ -85,6 +86,12 @@ async function upsertChunksBatch(chunks, bookId, chapterNum) {
     collection_name: CONFIG.COLLECTION_NAME,
     data: insertData,
   });
+
+  // ES 双写：同 id 覆盖（index 操作），与 Milvus 主键对齐，天然幂等
+  await bulkIndexChunks(
+    insertData.map(({ vector, ...doc }) => doc)
+  );
+
   return insertData.length;
 }
 
@@ -128,7 +135,7 @@ async function loadAndProcessEPubStreaming(bookId) {
 
 async function main() {
   console.log("=".repeat(80));
-  console.log("电子书入库程序（Milvus）");
+  console.log("电子书入库程序（Milvus + Elasticsearch 双写）");
   console.log("=".repeat(80));
 
   console.log("\n连接 Milvus...");
@@ -136,6 +143,11 @@ async function main() {
   console.log("✓ 已连接\n");
 
   await ensureCollection();
+
+  console.log("确保 Elasticsearch 索引存在...");
+  const created = await ensureEsIndex();
+  console.log(created ? "✓ ES 索引已创建" : "✓ ES 索引已存在");
+
   await loadAndProcessEPubStreaming(CONFIG.BOOK_ID);
 
   console.log("=".repeat(80));
