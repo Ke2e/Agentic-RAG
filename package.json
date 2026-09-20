@@ -1,0 +1,45 @@
+{
+  "name": "agentic-rag-multihop",
+  "version": "1.0.0",
+  "description": "基于 LangGraph 的 Agentic RAG 多跳问答系统：路由 → 拆解 → 迭代检索 → 规划 → 评估 → 联网兜底 → 混合检索（ES + Milvus RRF）",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "ingest": "node src/ebook-writter.mjs",
+    "rag:v1": "node src/naive-rag.mjs",
+    "rag:v2": "node src/rag-query-router.mjs",
+    "rag:v3": "node src/rag-multihop.mjs",
+    "rag:v4": "node src/rag-webfallback.mjs",
+    "rag:v5": "node src/rag-v5-final.mjs",
+    "graph": "node src/export-graphs.mjs",
+    "server": "node src/server/index.mjs",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "keywords": [
+    "rag",
+    "agentic-rag",
+    "langgraph",
+    "milvus",
+    "elasticsearch",
+    "llm",
+    "hybrid-search"
+  ],
+  "author": "Asize",
+  "license": "MIT",
+  "dependencies": {
+    "@elastic/elasticsearch": "^8.18.0",
+    "@langchain/community": "^1.1.29",
+    "@langchain/core": "^1.2.9",
+    "@langchain/langgraph": "^1.4.14",
+    "@langchain/openai": "^1.5.11",
+    "@langchain/textsplitters": "^1.0.0",
+    "@zilliz/milvus2-sdk-node": "^2.5.10",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "zod": "^3.25.76"
+  }
+}

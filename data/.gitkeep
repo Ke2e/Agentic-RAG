@@ -1,0 +1,2 @@
+把你的语料文件（.epub）放在这个目录，路径通过 .env 的 CORPUS_PATH 配置。
+语料文件有版权，已被 .gitignore 排除，不会进入 git。
