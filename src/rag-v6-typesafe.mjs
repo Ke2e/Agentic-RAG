@@ -43,22 +43,22 @@ const routeQuestionNode = async (state) => {
 
   let strategy;
   let routeReason;
-  let modelLabel;
+  let modelSuggestion;
   if (judged) {
     // 置信度护栏：判断不确定时宁可走完整链路（多检索不亏，漏检索才亏）
+    modelSuggestion = judged.strategy;
     strategy =
       judged.confidence < CONFIG.TYPESAFE_ROUTE_CONFIDENCE_FLOOR ? "complex" : judged.strategy;
     routeReason = `TypeSafe 置信度 ${judged.confidence}（${judged.detail}）`;
-    modelLabel = "jev-latest";
   } else {
     // 结构化输出：zod 约束在解码层，不靠模型自觉
     const router = model.withStructuredOutput(RouteSchema);
     const route = await router.invoke(ROUTE_PROMPT(state.question));
     strategy = route.strategy;
     routeReason = route.reason;
-    modelLabel = CONFIG.MODEL_NAME;
+    modelSuggestion = route.strategy;
   }
-  logDecision({ final: strategy, model: modelLabel, reason: routeReason });
+  logDecision({ final: strategy, model: modelSuggestion, reason: routeReason });
   return {
     question: state.question,
     k: state.k,
@@ -178,24 +178,24 @@ const planNextStepNode = async (state) => {
 
   let nextAction;
   let reason;
-  let modelLabel;
+  let modelSuggestion;
   if (judged) {
+    modelSuggestion = judged.nextAction;
     nextAction = judged.nextAction;
     reason = `TypeSafe 置信度 ${judged.confidence}（${judged.detail}）`;
-    modelLabel = "jev-latest";
   } else {
     const planModel = model.withStructuredOutput(NextStepSchema);
     const out = await planModel.invoke(prompt);
     nextAction = out.nextAction;
     reason = out.reason;
-    modelLabel = CONFIG.MODEL_NAME;
+    modelSuggestion = out.nextAction;
   }
 
   // 护栏一/二写在代码里：计数上限 + 子问题消费尽，均强制 generate
   let finalNext = nextAction;
   if (state.retrievalCount >= state.maxRetrievals) finalNext = "generate";
   if (remaining <= 0) finalNext = "generate";
-  logDecision({ final: finalNext, model: modelLabel, reason });
+  logDecision({ final: finalNext, model: modelSuggestion, reason });
 
   return { plannedNext: finalNext };
 };
