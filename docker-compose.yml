@@ -58,6 +58,12 @@ services:
 
   elasticsearch:
     build: ./docker/es
+    # ES 启动早期会用 InetAddress.getLocalHost() 解析自身主机名；
+    # Docker Desktop 重启后偶发解析失败（UnknownHostException），
+    # 固定 hostname 并写入 /etc/hosts 兜底
+    hostname: elasticsearch
+    extra_hosts:
+      - "elasticsearch:127.0.0.1"
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
