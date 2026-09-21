@@ -8,3 +8,4 @@ data/*
 npm-debug.log*
 .DS_Store
 Thumbs.db
+readme copy.md
