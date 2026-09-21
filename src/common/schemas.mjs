@@ -19,9 +19,17 @@ export const NextStepSchema = z.object({
 });
 
 // 评估：证据充分性 + 可选联网查询词
+// web_query 用 .nullable() 而非 .optional()：strict 结构化输出要求所有字段必填
 export const EvaluateSchema = z.object({
   enough: z.boolean(),
   missing: z.array(z.string()).max(6),
   reason: z.string(),
-  web_query: z.string().optional(),
+  web_query: z.string().nullable(),
+});
+
+// v6：enough 由 TypeSafe Noul 判定，缺失点与联网查询词（生成性输出）仍由主 LLM 补齐
+export const MissingQuerySchema = z.object({
+  missing: z.array(z.string()).max(6),
+  reason: z.string(),
+  web_query: z.string().nullable(),
 });

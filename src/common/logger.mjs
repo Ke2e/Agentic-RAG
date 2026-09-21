@@ -40,3 +40,10 @@ export async function logStream(stream, header = "\n[AI回答（流式）]\n") {
   process.stdout.write("\n");
   return text;
 }
+
+// 非流式回答的统一打印（v6 生成节点使用：部分 OpenAI 兼容端点流式响应不稳定）
+export async function logAnswer(message, header = "\n[AI回答]\n") {
+  const text = typeof message.content === "string" ? message.content : "";
+  process.stdout.write(header + text + "\n");
+  return text;
+}

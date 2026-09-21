@@ -3,7 +3,13 @@ import { START, END, StateGraph } from "@langchain/langgraph";
 import { CONFIG } from "./common/config.mjs";
 import { makeChatModel } from "./common/llm.mjs";
 import { defineGraphState, V5_FIELDS } from "./common/state.mjs";
-import { RouteSchema, DecomposeSchema, NextStepSchema, EvaluateSchema } from "./common/schemas.mjs";
+import {
+  RouteSchema,
+  DecomposeSchema,
+  NextStepSchema,
+  EvaluateSchema,
+  MissingQuerySchema,
+} from "./common/schemas.mjs";
 import {
   ROUTE_PROMPT,
   DIRECT_PROMPT,
@@ -16,20 +22,48 @@ import { getVectorStore } from "./common/vector-store.mjs";
 import { hybridSearch, mergeUnique } from "./common/hybrid.mjs";
 import { bochaWebSearch } from "./common/web-search.mjs";
 import { logAnswer, logBanner, logDecision, logDocs, logRound } from "./common/logger.mjs";
+import { isTypeSafeEnabled, judgeRoute, judgeNextStep, judgeEnough } from "./common/typesafe.mjs";
 
 const model = makeChatModel();
 const GraphState = defineGraphState(V5_FIELDS);
 
+// TypeSafe 判断失败不阻断主流程：打日志后回退 zod + LLM 路径
+const tryJudge = async (fn) => {
+  try {
+    return await fn();
+  } catch (err) {
+    console.log(`TypeSafe 判断失败，回退 LLM：${err.message}`);
+    return null;
+  }
+};
+
 const routeQuestionNode = async (state) => {
   logBanner("___ROUTE-QUESTION___");
-  const router = model.withStructuredOutput(RouteSchema);
-  const route = await router.invoke(ROUTE_PROMPT(state.question));
-  logDecision({ final: route.strategy, model: route.strategy, reason: route.reason });
+  const judged = isTypeSafeEnabled() ? await tryJudge(() => judgeRoute(state.question)) : null;
+
+  let strategy;
+  let routeReason;
+  let modelLabel;
+  if (judged) {
+    // 置信度护栏：判断不确定时宁可走完整链路（多检索不亏，漏检索才亏）
+    strategy =
+      judged.confidence < CONFIG.TYPESAFE_ROUTE_CONFIDENCE_FLOOR ? "complex" : judged.strategy;
+    routeReason = `TypeSafe 置信度 ${judged.confidence}（${judged.detail}）`;
+    modelLabel = "jev-latest";
+  } else {
+    // 结构化输出：zod 约束在解码层，不靠模型自觉
+    const router = model.withStructuredOutput(RouteSchema);
+    const route = await router.invoke(ROUTE_PROMPT(state.question));
+    strategy = route.strategy;
+    routeReason = route.reason;
+    modelLabel = CONFIG.MODEL_NAME;
+  }
+  logDecision({ final: strategy, model: modelLabel, reason: routeReason });
   return {
     question: state.question,
     k: state.k,
-    strategy: route.strategy,
-    routeReason: route.reason,
+    strategy,
+    routeReason,
     retrievalCount: 0,
     maxRetrievals: state.maxRetrievals ?? CONFIG.MAX_RETRIEVALS,
     documents: [],
@@ -119,6 +153,7 @@ const planNextStepNode = async (state) => {
           })
           .join("\n\n");
 
+  // LLM 回退路径的提示词（TypeSafe 走 state 对象，两路输入等价）
   const prompt = PLAN_PROMPT({
     question: state.question,
     subList,
@@ -128,14 +163,39 @@ const planNextStepNode = async (state) => {
     docStr,
   });
 
-  const planModel = model.withStructuredOutput(NextStepSchema);
-  const { nextAction, reason } = await planModel.invoke(prompt);
+  const judged = isTypeSafeEnabled()
+    ? await tryJudge(() =>
+        judgeNextStep({
+          question: state.question,
+          subList,
+          retrievalCount: state.retrievalCount,
+          remaining,
+          maxRetrievals: state.maxRetrievals,
+          retrievedDocs: docStr,
+        })
+      )
+    : null;
+
+  let nextAction;
+  let reason;
+  let modelLabel;
+  if (judged) {
+    nextAction = judged.nextAction;
+    reason = `TypeSafe 置信度 ${judged.confidence}（${judged.detail}）`;
+    modelLabel = "jev-latest";
+  } else {
+    const planModel = model.withStructuredOutput(NextStepSchema);
+    const out = await planModel.invoke(prompt);
+    nextAction = out.nextAction;
+    reason = out.reason;
+    modelLabel = CONFIG.MODEL_NAME;
+  }
 
   // 护栏一/二写在代码里：计数上限 + 子问题消费尽，均强制 generate
   let finalNext = nextAction;
   if (state.retrievalCount >= state.maxRetrievals) finalNext = "generate";
   if (remaining <= 0) finalNext = "generate";
-  logDecision({ final: finalNext, model: nextAction, reason });
+  logDecision({ final: finalNext, model: modelLabel, reason });
 
   return { plannedNext: finalNext };
 };
@@ -149,6 +209,39 @@ const evaluateNode = async (state) => {
     .map((d) => `第${d.chapter_num}章：${d.content}`)
     .join("\n\n");
 
+  const judged = isTypeSafeEnabled()
+    ? await tryJudge(() =>
+        judgeEnough({ question: state.question, localContext, webContext: state.webContext })
+      )
+    : null;
+
+  if (judged) {
+    // Noul 返回「充分」的概率，阈值裁决写在代码里：判断是概率，决策是 if
+    const enough = judged.probability >= CONFIG.TYPESAFE_ENOUGH_THRESHOLD;
+    console.log(`${hasWeb ? "二次评估" : "评估"}(TypeSafe): enough=${enough} (p=${judged.probability})`);
+    if (!enough) {
+      // 缺失点与联网查询词是生成性输出，TypeSafe 不做，仍由主 LLM 补齐
+      const out = await model
+        .withStructuredOutput(MissingQuerySchema)
+        .invoke(
+          EVALUATE_PROMPT({
+            question: state.question,
+            localContext,
+            hasWeb,
+            webContext: state.webContext,
+          })
+        );
+      if (out.missing?.length) {
+        out.missing.forEach((m, i) => console.log(`缺失 ${i + 1}: ${m}`));
+      }
+      return {
+        evaluation: { enough, enoughProbability: judged.probability, ...out },
+      };
+    }
+    return { evaluation: { enough, enoughProbability: judged.probability } };
+  }
+
+  // v5 原路径：zod 一次拿齐 enough + missing + web_query
   const evaluator = model.withStructuredOutput(EvaluateSchema);
   const out = await evaluator.invoke(
     EVALUATE_PROMPT({
@@ -204,7 +297,8 @@ const afterEvaluateLocal = (state) => {
   return state.evaluation?.enough === true ? "generate" : "web_search";
 };
 
-// v5 终态图 = v3 的「拆解→迭代检索→规划」+ v4 的「评估→联网兜底」+ 混合检索
+// v6 = v5 终态图 + 判断类任务交给 TypeSafe（路由/规划用 Choice，证据评估用 Noul），
+// 生成类任务（拆解、生成）仍走主 LLM；未配置 TYPESAFE_API_KEY 时行为与 v5 完全一致
 export function buildGraph() {
   return new StateGraph(GraphState)
     .addNode("route_question", routeQuestionNode)
@@ -239,10 +333,9 @@ export function buildGraph() {
 export const graph = buildGraph();
 
 async function main() {
-  const question = `请回答《心灵侦探城塚翡翠》小说里犯下"连环抛尸案"究竟是谁，他最后有没有被香月抓住；
-  另外请补充： 《心灵侦探城塚翡翠》的下一册叫什么名字？
-  请给出可核对的来源链接。
-  `;
+  // 多跳验证题：链式关系（人物A → 人物B → 相识经过），可拆成有序子问题
+  const question = `请回答《${CONFIG.BOOK_TITLE}》中主角是谁，主角最重要的伙伴是谁，两人是如何相识的？
+  请基于书中情节给出有依据的回答。`;
   const k = CONFIG.TOP_K;
 
   const drawable = await graph.getGraphAsync();
@@ -250,16 +343,18 @@ async function main() {
 
   console.log("=".repeat(80));
   console.log(`问题：${question}`);
+  console.log(
+    isTypeSafeEnabled()
+      ? `判断后端：TypeSafe（jev-latest）+ 生成后端：${CONFIG.MODEL_NAME}`
+      : `判断后端：${CONFIG.MODEL_NAME}（未配置 TYPESAFE_API_KEY，行为等同 v5）`
+  );
   console.log("=".repeat(80));
 
   logBanner("连接 Milvus...");
   await getVectorStore();
   console.log("已连接");
 
-  const result = await graph.invoke(
-    { question, k },
-    { recursionLimit: 50 }
-  );
+  const result = await graph.invoke({ question, k }, { recursionLimit: 50 });
 
   if (!result.generation) {
     console.log("模型未返回内容。");

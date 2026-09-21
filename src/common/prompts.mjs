@@ -1,11 +1,13 @@
 // 所有 prompt 与课程原版措辞保持一致，便于逐版本对照学习。
+// 书名参数化：默认《天龙八部》与课程原版一致，换语料时通过 BOOK_TITLE 切换。
+import { CONFIG } from "./config.mjs";
 
 export const ROUTE_PROMPT = (question) => `
   你是问答路由器，请判断用户问题是否需要外部检索。
 
   规则：
   - simple: 常识问答、简短定义、无需特定小说细节即可回答。
-  - complex: 需要《天龙八部》具体情节、任务关系、章节事实、原文细节或证据支持。
+  - complex: 需要《${CONFIG.BOOK_TITLE}》具体情节、任务关系、章节事实、原文细节或证据支持。
 
   用户问题： ${question}
   `;
@@ -17,7 +19,7 @@ export const DIRECT_PROMPT = (question) => `
   `;
 
 export const DECOMPOSE_PROMPT = (question) => `
-    你是《天龙八部》多跳问答的【子问题拆解器】。
+    你是《${CONFIG.BOOK_TITLE}》多跳问答的【子问题拆解器】。
     用户原始问题：
     ${question}
 
@@ -69,8 +71,8 @@ export const EVALUATE_PROMPT = ({ question, localContext, hasWeb, webContext }) 
 
 // v1/v3 的小说问答生成 prompt
 export const GEN_NOVEL_PROMPT = ({ context, question }) => `
-  你是一个专业的《天龙八部》小说助手。基于小说内容回答问题，用准确，详细的语言。
-  请根据以下《天龙八部》小说片段内容回答问题：
+  你是一个专业的《${CONFIG.BOOK_TITLE}》小说助手。基于小说内容回答问题，用准确，详细的语言。
+  请根据以下《${CONFIG.BOOK_TITLE}》小说片段内容回答问题：
   ${context}
   用户问题：${question}
 

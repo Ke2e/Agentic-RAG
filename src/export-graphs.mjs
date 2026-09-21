@@ -6,6 +6,7 @@ import { graph as v2 } from "./rag-query-router.mjs";
 import { graph as v3 } from "./rag-multihop.mjs";
 import { graph as v4 } from "./rag-webfallback.mjs";
 import { graph as v5 } from "./rag-v5-final.mjs";
+import { graph as v6 } from "./rag-v6-typesafe.mjs";
 
 const targets = [
   ["v1-naive", v1],
@@ -13,6 +14,7 @@ const targets = [
   ["v3-multihop", v3],
   ["v4-webfallback", v4],
   ["v5-final", v5],
+  ["v6-typesafe", v6],
 ];
 
 const outDir = join(fileURLToPath(new URL("../docs/graphs/", import.meta.url)));

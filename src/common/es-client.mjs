@@ -62,12 +62,18 @@ export async function keywordSearch(query, k = CONFIG.ES_TOP_K) {
   }));
 }
 
+// v8 的 helpers.bulk 签名是 { datasource, onDocument }，
+// 不接受 NDJSON operations（传了会报 "the datasource is required"）
 export async function bulkIndexChunks(docs) {
+  if (docs.length === 0) {
+    return { success: 0 };
+  }
   const es = getEsClient();
-  const operations = docs.flatMap((d) => [
-    { index: { _index: CONFIG.ES_INDEX, _id: d.id } },
-    d,
-  ]);
-  const res = await es.helpers.bulk({ operations });
+  const res = await es.helpers.bulk({
+    datasource: docs,
+    onDocument: (doc) => ({
+      index: { _index: CONFIG.ES_INDEX, _id: doc.id },
+    }),
+  });
   return res;
 }
